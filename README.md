@@ -14,7 +14,7 @@ public function RxlsxTest()
 }
 private function urlloaderCompHandler(e:Event):void
 {
-        var excel:Excel = new Excel(urlloader.data as ByteArray);
+        var excel:Excel = new Excel(urlloader.data as ByteArray,0);
         var sheet:Array = excel.getSheetArray();//得到表格数据
 }
 </pre>
