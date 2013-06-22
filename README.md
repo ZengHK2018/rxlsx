@@ -1,4 +1,5 @@
 rxlsx
 =====
 
-读取xlsx文件（ActionScript版）
+读取Excel(xlsx)文件（ActionScript版）
+
