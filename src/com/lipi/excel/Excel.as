@@ -3,15 +3,20 @@ package com.lipi.excel
 	import flash.utils.ByteArray;
 
 	/**
-	 * 解析excel（xlsx)文件的类
+	 * 解析excel（xlsx)文件 的类
 	 * @author lipi
 	 */
 	public class Excel
 	{
 		
+		
 		private var _fileByteArray:ByteArray;
 		private var _sheetIndex:int;
 		private var _zip:Zip;
+		private var _namePathKV:Object;//名字的地址的键值对
+		private var _cache:Object;
+		private var _jsonCache:Object;//json缓存
+		
 		
 		/**
 		 * 
@@ -21,32 +26,139 @@ package com.lipi.excel
 		public function Excel(fileByteArray:ByteArray,sheetIndex:int = 0)
 		{
 			_fileByteArray = fileByteArray;
+			_zip = new Zip(_fileByteArray);
+//			_namePathKV = getNamePathKV();
 			_sheetIndex = sheetIndex;
+			_jsonCache = {};
+			_cache = {};
 		}
 		
 		private var _sheetArray:Array;
 		
+		
+		
 		/**
-		 * 取得解析后的表格数据。值为二维数组，第一维是行索引，第二维是列索引
+		 * 取得表名对应的表路径
+		 */
+		private function getNamePathKV():Object
+		{
+			if(_namePathKV != null) return _namePathKV;
+			var returnObj:Object = {};
+			var ns:Namespace;
+			var $xml:XML = getFileXML("xl/workbook.xml");
+			ns = $xml.namespace();
+			var ns_r:Namespace = $xml.namespace("r");
+			var $sheetList:XMLList = $xml.ns::sheets.ns::sheet;
+			var $ridKV:Object = {};
+			for each(var sheet:XML in $sheetList)
+			{
+				var $name:String = sheet.@name;
+				var $rid:String = sheet.@ns_r::id;
+				$ridKV[$rid] = $name;
+			}
+			
+			var $relsXML:XML = getFileXML("xl/_rels/workbook.xml.rels");
+			ns = $relsXML.namespace();
+			var relsList:XMLList = $relsXML.ns::Relationship;
+			for each(var Relationship:XML in relsList)
+			{
+				var $Id:String = Relationship.@Id;
+				if($ridKV.hasOwnProperty($Id))
+				{
+					var $keyName:String = ($ridKV[$Id] as String).replace(/^\s*|\s*$/g,''); 
+					var $valStr:String = Relationship.@Target;
+					returnObj[$keyName] = "xl/" + $valStr;
+				}
+				
+			}
+			_namePathKV = returnObj;
+			return _namePathKV;
+		}
+		
+		//取zip中的XML文件
+		private function getFileXML(url:String):XML
+		{
+			var $workbookUrl:String = url;//"xl/workbook.xml";
+			var $byteArray:ByteArray = _zip.getFile($workbookUrl);
+			var xmlString:String = $byteArray.readUTFBytes($byteArray.bytesAvailable);
+			var $xml:XML = new XML(xmlString);
+			return $xml;
+		}
+		
+		/**
+		 * 返回初始化指定的表数据
 		 */
 		public function getSheetArray():Array
 		{
-			if(_zip == null)
-			{
-				_zip = new Zip(_fileByteArray);
-			}
-			
-			if(_sheetArray) return _sheetArray;
-			
-			
-			var sheetIndexString:String = (_sheetIndex + 1).toString();
+			return getSheetArrayUseIndex(_sheetIndex);
+		}
+		
+		/**
+		 * 取得解析后的表格数据。值为二维数组，第一维是行索引，第二维是列索引
+		 */
+		public function getSheetArrayUseIndex(sheetIndex:int = 0):Array
+		{
+			var sheetIndexString:String = (sheetIndex + 1).toString();
 			var $sheetUrl:String = "xl/worksheets/sheet" + sheetIndexString + ".xml";
-			
+			if(_cache.hasOwnProperty($sheetUrl)) return _cache[$sheetUrl];
+			else
+			{
+				_cache[$sheetUrl] = _getSheetArray($sheetUrl);
+				return _cache[$sheetUrl];
+			}
+		}
+		
+		
+		/**
+		 * 取得解析后的表格数据,使用表名。值为二维数组，第一维是行索引，第二维是列索引
+		 */
+		public function getSheetArrayUseName(sheetName:String):Array
+		{
+			sheetName = sheetName.replace(/^\s*|\s*$/g,''); 
+			var $sheetUrl:String = getNamePathKV()[sheetName];
+			if($sheetUrl == null) return null;
+			if(_cache.hasOwnProperty($sheetUrl)) return _cache[$sheetUrl];
+			else
+			{
+				_cache[$sheetUrl] = _getSheetArray($sheetUrl);
+				return _cache[$sheetUrl];
+			}
+		}
+		
+		
+		/**
+		 * 取得JSON格式，返回的是行数据，行数据为键值hash
+		 */
+		public function getSheetJSONUseName(sheetName:String):Array
+		{
+			if(_jsonCache.hasOwnProperty(sheetName)) return _jsonCache[sheetName];
+			var arr:Array = getSheetArrayUseName(sheetName);
+			var dataArr:Array = [];
+			var titleArr:Array = arr[0];
+			var i:int;
+			for(i = 1;i<arr.length;i++)
+			{
+				var obj:Object = {};
+				var cArr:Array = arr[i];
+				if(cArr == null) break;
+				for(var j:int = 0;j<titleArr.length;j++)
+				{
+					obj[titleArr[j]] = cArr[j];
+				}
+				dataArr.push(obj);
+			}
+			_jsonCache[sheetName] = dataArr;
+			return dataArr;
+		}
+		
+		
+		
+		private function _getSheetArray(url:String):Array
+		{
+			var $sheetUrl:String = url;
 			var valueArray:Array = getValueArray();
 			
-			var $byteArray:ByteArray = _zip.getFile($sheetUrl);
-			var xmlString:String = $byteArray.readUTFBytes($byteArray.bytesAvailable);
-			var $xml:XML = new XML(xmlString);
+			var $xml:XML = getFileXML($sheetUrl);
 			var ns:Namespace = $xml.namespace();
 			
 			var excelArray:Array = [];
@@ -94,9 +206,10 @@ package com.lipi.excel
 				
 			}
 			
-			_sheetArray = excelArray;
+//			_sheetArray = excelArray;
 			return excelArray;
 		}
+		
 		
 		
 		private function getValueArray():Array
